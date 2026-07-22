@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.hf_cache/
+.DS_Store
+
+# dataset & training artifacts - re-download/regenerate instead of committing
+Dataset/
+model-explore/data/
+model-explore/runs/
+model-explore/*.pt

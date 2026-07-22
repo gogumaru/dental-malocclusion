@@ -1,0 +1,10 @@
+pandas
+numpy
+matplotlib
+pillow
+seaborn
+jupyter
+ipykernel
+datasets
+pyarrow
+huggingface_hub
