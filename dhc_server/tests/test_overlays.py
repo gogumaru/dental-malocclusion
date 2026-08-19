@@ -29,7 +29,10 @@ SIM_ROOT = REPO / "Dataset" / "app_simulation_patient"
 REVERSED_OKLUSAL = {"2021.04", "2023.14", "2018.08", "2018.73", "2018.57a"}
 
 VIEW_KEYS = {"frontal", "lateral_kanan", "lateral_kiri", "oklusal_atas", "oklusal_bawah"}
-VALID_ROLES = {"tooth", "flagged", "anchor", "measurement", "archCurve", "gap"}
+VALID_ROLES = {"tooth", "flagged", "anchor", "reference", "measurement",
+               "archCurve", "gap", "rejected"}
+VALID_PARAMS = {"overjet", "overbite", "anterior_crossbite", "angle",
+                "crossbite_posterior", "missing", "crowding"}
 POINT_COUNT_RULE = {"polygon": (3, None), "box": (2, 2), "line": (2, None), "point": (1, 1)}
 
 OVERLAY_BUDGET_KB = 40
@@ -82,7 +85,10 @@ def test_shape_structure(results):
     for pid, r in results.items():
         for view, shape in _all_shapes(r):
             where = f"{pid}/{view}"
-            assert set(shape) == {"kind", "role", "label", "points"}, f"{where}: kunci bentuk salah"
+            assert set(shape) == {"kind", "role", "label", "params", "points"}, (
+                f"{where}: kunci bentuk salah"
+            )
+            assert isinstance(shape["params"], list), f"{where}: `params` harus list"
             assert shape["kind"] in POINT_COUNT_RULE, f"{where}: kind tidak dikenal {shape['kind']}"
             assert shape["label"] is None or isinstance(shape["label"], str)
 
@@ -142,6 +148,75 @@ def test_flagged_label_matches_flagged_teeth(results):
             )
 
 
+def test_params_use_response_keys(results):
+    """`params` harus memakai kunci parameter response, bukan nama karangan."""
+    for pid, r in results.items():
+        for view, shape in _all_shapes(r):
+            for prm in shape["params"]:
+                assert prm in VALID_PARAMS, f"{pid}/{view}: params tak dikenal '{prm}'"
+
+
+def test_context_shapes_always_visible(results):
+    """`tooth` & `archCurve` adalah konteks -- harus tampil di semua parameter."""
+    for pid, r in results.items():
+        for view, shape in _all_shapes(r):
+            if shape["role"] in ("tooth", "archCurve"):
+                assert shape["params"] == [], (
+                    f"{pid}/{view}: {shape['role']} harus params kosong (selalu tampil)"
+                )
+
+
+def test_findings_have_matching_shapes(results):
+    """Kalau sebuah parameter PUNYA temuan, bentuknya harus ada.
+
+    Parameter yang hasilnya normal memang tidak punya bentuk tambahan -- yang
+    tampil cuma outline. Yang tidak boleh terjadi: ada temuan di angka, tapi tidak
+    ada apa pun yang bisa ditunjuk di layar.
+    """
+    for pid, r in results.items():
+        by_param = {}
+        for _v, sh in _all_shapes(r):
+            for prm in sh["params"]:
+                by_param.setdefault(prm, 0)
+                by_param[prm] += 1
+
+        if r["overjet"]["value"] is not None:
+            assert by_param.get("overjet"), f"{pid}: overjet ada nilainya tapi tak ada bentuk"
+        if r["angle"]["canine"]["value"] is not None or r["angle"]["molar"]["value"] is not None:
+            assert by_param.get("angle"), f"{pid}: angle ada nilainya tapi tak ada bentuk"
+        for arch in ("upper", "lower"):
+            crowd = r["crowding"][arch]
+            if crowd and crowd["flagged_teeth"]:
+                assert by_param.get("crowding"), f"{pid}: ada gigi crowding tapi tak ada bentuk"
+        if r["crossbite_posterior"]["flagged"]:
+            assert by_param.get("crossbite_posterior"), f"{pid}: ada crossbite tapi tak ada bentuk"
+
+
+def test_reference_boxes_are_the_measured_teeth(results):
+    """`reference` = gigi yang dipakai mengukur, terpisah dari keluaran detector."""
+    for pid, r in results.items():
+        for view in ("lateral_kanan", "lateral_kiri"):
+            data = r["overlays"][view]
+            if data is None:
+                continue
+            for sh in data["shapes"]:
+                if sh["role"] == "reference":
+                    # Dua bentuk `reference` yang sah di lateral:
+                    #  - box gigi yang dipakai mengukur (label: incisor/molar/canine)
+                    #  - poligon gigi anterior yang DIPERIKSA crossbite (label: nomor posisi)
+                    if sh["kind"] == "box":
+                        assert sh["label"] in {"incisor", "molar", "canine"}
+                    else:
+                        assert sh["kind"] == "polygon"
+                        assert sh["label"].isdigit(), (
+                            f"{pid}/{view}: reference poligon harus berlabel nomor posisi"
+                        )
+                        assert "anterior_crossbite" in sh["params"]
+                if sh["role"] == "anchor":
+                    # label detector TANPA awalan "det " -- provenance ada di role
+                    assert sh["label"] in {"canine", "distal"}
+
+
 def test_anchor_boxes_are_the_ones_actually_used(results):
     """Maksimal 4 anchor per lateral (kaninus+distal x atas+bawah).
 
@@ -165,11 +240,15 @@ def test_payload_within_budget(results):
         assert kb < OVERLAY_BUDGET_KB, f"{pid}: overlay {kb:.1f} kB melebihi anggaran {OVERLAY_BUDGET_KB} kB"
 
 
-def test_rejected_role_is_off_by_default():
-    """Role `rejected` belum ada di kontrak -- jangan pernah terkirim tanpa kesepakatan."""
+def test_rejected_layer_is_sent():
+    """Role `rejected` disepakati tim app -- mask yang dibuang ikut dikirim.
+
+    App menggambarnya abu-abu putus-putus dan menyembunyikannya secara default;
+    layer ini yang menjelaskan KENAPA sebuah hasil ditandai tidak andal.
+    """
     from dhc_pipeline.config import DEFAULT_CONFIG
 
-    assert DEFAULT_CONFIG.OVERLAY_INCLUDE_REJECTED is False
+    assert DEFAULT_CONFIG.OVERLAY_INCLUDE_REJECTED is True
 
 
 def test_overlay_can_be_disabled():
@@ -184,3 +263,20 @@ def test_overlay_can_be_disabled():
                         occ_upper=None, occ_lower=None, cfg=cfg)
     assert set(ov) == VIEW_KEYS
     assert all(v is None for v in ov.values())
+
+
+def test_posterior_crossbite_excludes_anterior_zone(results):
+    """Crossbite POSTERIOR hanya premolar & molar (posisi >= 4).
+
+    Posisi 1-3 dari midline adalah zona anterior (C-ke-C). Sebelum batas ini
+    dipasang, temuan zona anterior salah dilaporkan sebagai crossbite posterior
+    di 6 dari 22 pasien.
+    """
+    from dhc_pipeline.config import DEFAULT_CONFIG
+
+    for pid, r in results.items():
+        for f in r["crossbite_posterior"]["flagged"]:
+            assert f["posisi"] >= DEFAULT_CONFIG.CROSSBITE_POSTERIOR_MIN_POSITION, (
+                f"{pid}: posisi {f['posisi']} ada di zona anterior, "
+                "tidak boleh dihitung sebagai crossbite posterior"
+            )

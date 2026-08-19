@@ -112,14 +112,18 @@ def assert_contract_shape(body: dict) -> None:
         "frontal", "lateral_kanan", "lateral_kiri", "oklusal_atas", "oklusal_bawah"
     }, f"kunci overlay harus sama dengan nama field unggahan, dapat {set(overlays)}"
 
-    valid_roles = {"tooth", "flagged", "anchor", "measurement", "archCurve", "gap"}
+    valid_roles = {"tooth", "flagged", "anchor", "reference", "measurement",
+                   "archCurve", "gap", "rejected"}
     count_rule = {"polygon": (3, None), "box": (2, 2), "line": (2, None), "point": (1, 1)}
     for view, data in overlays.items():
         if data is None:
             continue
         assert set(data) == {"shapes"}, f"{view}: overlay hanya boleh punya kunci `shapes`"
         for sh in data["shapes"]:
-            assert set(sh) == {"kind", "role", "label", "points"}, f"{view}: kunci bentuk salah"
+            assert set(sh) == {"kind", "role", "label", "params", "points"}, (
+                f"{view}: kunci bentuk salah"
+            )
+            assert isinstance(sh["params"], list), f"{view}: `params` harus list"
             assert sh["role"] in valid_roles, f"{view}: role tak dikenal {sh['role']}"
             lo, hi = count_rule[sh["kind"]]
             n = len(sh["points"])
@@ -225,6 +229,14 @@ def test_stub_actually_contains_overlays(stub_client):
     assert filled, "stub tidak boleh mengirim overlay kosong semua"
 
     roles = {sh["role"] for v in filled for sh in v["shapes"]}
-    # contoh harus mewakili, bukan cuma satu jenis -- app perlu menguji semua warna
-    for role in ("tooth", "anchor", "flagged", "archCurve"):
+    # contoh harus mewakili SEMUA role -- app perlu menguji setiap warna & layer,
+    # termasuk `rejected` yang mereka gambar abu-abu putus-putus
+    for role in ("tooth", "anchor", "reference", "flagged", "measurement",
+                 "archCurve", "gap", "rejected"):
         assert role in roles, f"contoh stub belum mencakup role `{role}`"
+
+    # dan setiap parameter harus bisa difilter dari stub
+    params = {p for v in filled for sh in v["shapes"] for p in sh["params"]}
+    for prm in ("overjet", "overbite", "anterior_crossbite", "angle",
+                "crossbite_posterior", "missing", "crowding"):
+        assert prm in params, f"contoh stub belum mencakup parameter `{prm}`"

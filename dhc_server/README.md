@@ -77,22 +77,41 @@ curl -X POST http://localhost:8000/v1/analyze \
 
 ## Overlay (geometri untuk digambar app)
 
-Kunci `overlays` mengirim **koordinat**, bukan gambar jadi — app masih memegang fotonya, jadi cukup dikirim angka. Detail kontraknya di `API_CONTRACT_OVERLAYS.md`.
+Kunci `overlays` mengirim **koordinat**, bukan gambar jadi — app masih memegang fotonya, jadi cukup dikirim angka. Acuan: `API_CONTRACT_OVERLAYS.md` + `OVERLAY_FILTERING_PROPOSAL.md`.
 
 Semua titik adalah pecahan **0–1 terhadap gambar yang diunggah**, titik asal kiri-atas. Sudah diverifikasi bahwa `masks.xy` ultralytics berada di ruang piksel gambar asli (bukan 640×640 hasil letterbox): gambar yang sama diuji pada 512×341 sampai 2048×1364, pecahan koordinatnya identik.
+
+Tiap bentuk punya dua sumbu keterangan yang sengaja dipisah:
+
+- **`role`** menjawab *"ini apa"* → menentukan **warna** di app
+- **`params`** menjawab *"ini bantu periksa apa"* → menentukan **kapan ditampilkan**
 
 | `role` | Dipakai untuk |
 |---|---|
 | `tooth` | mask segmentasi biasa |
-| `flagged` | gigi yang ditandai aturan (crowding, displacement, crossbite) |
-| `anchor` | box detector kaninus & distal — **paling berguna**, ini yang mendasari Overjet/Overbite/Angle |
+| `flagged` | gigi yang ditandai aturan (crowding, crossbite) |
+| `anchor` | **keluaran detector** — kaninus & distal |
+| `reference` | **gigi yang benar-benar dipakai mengukur** — insisivus, molar, kaninus |
 | `measurement` | garis tempat overjet & overbite diukur |
 | `archCurve` | kurva lengkung hasil fit |
 | `gap` | dugaan celah gigi hilang |
+| `rejected` | mask yang **dibuang** pipeline (serpihan tepi frame, outlier kurva) |
 
-Ukuran: rata-rata **19.7 kB** per pasien (maksimum 23.4 kB dari 22 pasien), sekitar 80–100 bentuk. Bisa dimatikan lewat `OVERLAY_ENABLED`; kuncinya tetap ada dengan isi `null` supaya bentuk response stabil.
+`anchor` dan `reference` sengaja dipisah: kalau box detector dan gigi yang dipakai mengukur **tidak bertumpuk**, itu sendiri informasi penting. Kasus overjet 9.33 adalah contohnya — detector-nya berhasil, yang meleset justru insisivus yang diturunkan dengan menghitung posisi dari kaninus.
 
-Mask yang **dibuang** pipeline (serpihan tepi frame, outlier kurva) belum dikirim — `role` untuk itu belum disepakati tim app. Kodenya siap di balik `OVERLAY_INCLUDE_REJECTED` (default mati) supaya server tidak pernah mengirim role yang tidak dikenal app.
+Aturan filter di sisi app:
+
+```
+gambar sebuah bentuk jika:
+    params kosong                  (konteks: outline & kurva lengkung)
+    ATAU parameter_aktif ada di params
+```
+
+Nilai `params` memakai kunci parameter response apa adanya: `overjet`, `overbite`, `anterior_crossbite`, `angle`, `crossbite_posterior`, `missing`, `crowding`.
+
+Ukuran: rata-rata **22.4 kB** per pasien (maksimum 26.9 kB dari 22 pasien), sekitar 96 bentuk. Bisa dimatikan lewat `OVERLAY_ENABLED`; kuncinya tetap ada dengan isi `null` supaya bentuk response stabil.
+
+Gigi ter-flag **displacement** di frontal sengaja tidak dikirim — `displacement` bukan parameter di response utama, jadi tidak ada layar yang bisa menampilkannya.
 
 ## Struktur
 

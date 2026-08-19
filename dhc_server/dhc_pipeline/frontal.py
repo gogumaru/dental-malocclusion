@@ -101,6 +101,9 @@ def compute_crossbite_proxy_edge(side, result_upper, result_lower, midline_x, ar
     lower_by_pos = {pos: f for f, pos in result_lower[side]}
     rows = []
     for pos in sorted(set(upper_by_pos) & set(lower_by_pos)):
+        # Posisi 1-3 = zona anterior (C-ke-C), bukan wilayah crossbite posterior.
+        if pos < cfg.CROSSBITE_POSTERIOR_MIN_POSITION:
+            continue
         f_upper, f_lower = upper_by_pos[pos], lower_by_pos[pos]
         offset_upper = transverse_offset_edge(f_upper, side, midline_x)
         offset_lower = transverse_offset_edge(f_lower, side, midline_x)

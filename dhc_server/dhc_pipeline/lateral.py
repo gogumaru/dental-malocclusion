@@ -329,6 +329,24 @@ def analyze_lateral(img_path: Path, cfg: Config = DEFAULT_CONFIG) -> Dict[str, A
 
     result["reliable"] = incisors is not None and not result["warnings"]
 
+    # --- Crossbite anterior: C-ke-C (posisi 1-3), bukan hanya insisivus sentral ---
+    # Tiap posisi diperiksa sendiri; satu saja negatif sudah cukup. Barisnya
+    # disimpan lengkap (termasuk yang normal) supaya overlay bisa menunjukkan
+    # gigi mana yang diperiksa, bukan cuma yang bermasalah.
+    ac_rows = []
+    for pos in cfg.ANTERIOR_CROSSBITE_POSITIONS:
+        pair = get_pair(arch_results["upper"], arch_results["lower"], pos)
+        if pair is None:
+            continue
+        ratio = compute_overjet_proxy(pair[0], pair[1], direction2)
+        ac_rows.append({
+            "posisi": pos,
+            "ratio": ratio,
+            "flagged": ratio < cfg.ANTERIOR_CROSSBITE_THRESHOLD,
+            "teeth": pair,
+        })
+    result["anterior_crossbite_rows"] = ac_rows
+
     molars = get_pair(arch_results["upper"], arch_results["lower"], 6)
     if molars is not None:
         result["molar_ratio"], result["molar_label"] = compute_relationship_proxy(

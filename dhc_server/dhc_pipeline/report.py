@@ -121,22 +121,59 @@ def _build_overjet_overbite(lat_right, lat_left, cfg: Config):
         side, val, label, rel, warns = ob_best
         overbite = reading(val, label, side, rel, warns)
 
-    # Crossbite anterior = overjet negatif (tidak ada pengukuran terpisah).
-    # Dilaporkan sebagai Reading penuh yang mencerminkan overjet, supaya aturan #1
-    # tetap berlaku: null HANYA kalau memang tidak bisa dihitung.
-    if oj_best is None:
-        anterior = reading(warnings=_no_reading_warnings(lat_right, lat_left))
-    else:
-        side, val, _label, rel, warns = oj_best
-        present = val < cfg.OVERJET_LOW
-        anterior = reading(
-            val,
-            "possible anterior crossbite" if present else "no anterior crossbite",
-            side,
-            rel,
-            warns,
+    return overjet, overbite, _build_anterior_crossbite(lat_right, lat_left, cfg)
+
+
+def _build_anterior_crossbite(lat_right, lat_left, cfg: Config) -> Dict[str, Any]:
+    """Crossbite anterior dari C-ke-C (posisi 1-3 di tiap lateral), bukan dari overjet.
+
+    Revisi dokter: satu gigi saja yang atasnya di belakang pasangan bawahnya sudah
+    cukup untuk menyebut crossbite. Jadi ini TIDAK lagi turunan overjet -- overjet
+    hanya melihat insisivus sentral, dan itu terbukti melewatkan kasus nyata
+    (pasien 2023.14: pos1 normal, tapi pos2 & pos3 crossbite).
+
+    `value` = rasio PALING NEGATIF di antara semua posisi yang bisa diukur, jadi
+    angkanya tetap satu besaran yang bisa dibandingkan antar pasien. Gigi mana yang
+    terlibat ditunjukkan lewat overlay (role `flagged`, params `anterior_crossbite`).
+    """
+    worst = None       # (ratio, side_en, posisi, reliable, warnings)
+    any_flagged = False
+    measured = 0
+
+    for side_id, res in (("kanan", lat_right), ("kiri", lat_left)):
+        if res is None:
+            continue
+        for row in res.get("anterior_crossbite_rows", []):
+            measured += 1
+            if row["flagged"]:
+                any_flagged = True
+            cand = (row["ratio"], SIDE_ID_TO_EN[side_id], row["posisi"],
+                    res.get("reliable", False), res.get("warnings", []))
+            if worst is None or cand[0] < worst[0]:
+                worst = cand
+
+    if worst is None:
+        return reading(warnings=_no_reading_warnings(lat_right, lat_left))
+
+    ratio, side, posisi, rel, warns = worst
+    warns = list(warns)
+    # Kalau tidak semua enam gigi terukur, hasil "tidak ada crossbite" belum tentu
+    # benar -- gigi yang tidak terukur bisa saja justru yang bermasalah.
+    expected = 2 * len(cfg.ANTERIOR_CROSSBITE_POSITIONS)
+    if measured < expected and not any_flagged:
+        warns.append(
+            f"only {measured} of {expected} anterior teeth could be measured; "
+            "an unmeasured tooth could still be in crossbite"
         )
-    return overjet, overbite, anterior
+        rel = False
+
+    return reading(
+        ratio,
+        "possible anterior crossbite" if any_flagged else "no anterior crossbite",
+        side,
+        rel,
+        warns,
+    )
 
 
 def _angle_class(ratio: Optional[float], cfg: Config) -> Optional[str]:
